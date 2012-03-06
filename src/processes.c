@@ -37,89 +37,13 @@
 #include "plugin.h"
 #include "configfile.h"
 
-/* Include header files for the mach system, if they exist.. */
-#if HAVE_THREAD_INFO
-#if HAVE_MACH_MACH_INIT_H
-#include <mach/mach_init.h>
-#endif
-#if HAVE_MACH_HOST_PRIV_H
-#include <mach/host_priv.h>
-#endif
-#if HAVE_MACH_MACH_ERROR_H
-#include <mach/mach_error.h>
-#endif
-#if HAVE_MACH_MACH_HOST_H
-#include <mach/mach_host.h>
-#endif
-#if HAVE_MACH_MACH_PORT_H
-#include <mach/mach_port.h>
-#endif
-#if HAVE_MACH_MACH_TYPES_H
-#include <mach/mach_types.h>
-#endif
-#if HAVE_MACH_MESSAGE_H
-#include <mach/message.h>
-#endif
-#if HAVE_MACH_PROCESSOR_SET_H
-#include <mach/processor_set.h>
-#endif
-#if HAVE_MACH_TASK_H
-#include <mach/task.h>
-#endif
-#if HAVE_MACH_THREAD_ACT_H
-#include <mach/thread_act.h>
-#endif
-#if HAVE_MACH_VM_REGION_H
-#include <mach/vm_region.h>
-#endif
-#if HAVE_MACH_VM_MAP_H
-#include <mach/vm_map.h>
-#endif
-#if HAVE_MACH_VM_PROT_H
-#include <mach/vm_prot.h>
-#endif
-#if HAVE_SYS_SYSCTL_H
-#include <sys/sysctl.h>
-#endif
-/* #endif HAVE_THREAD_INFO */
 
-#elif KERNEL_LINUX
-#if HAVE_LINUX_CONFIG_H
-#include <linux/config.h>
-#endif
-#ifndef CONFIG_HZ
-#define CONFIG_HZ 100
-#endif
-/* #endif KERNEL_LINUX */
-
-#elif HAVE_LIBKVM_GETPROCS && HAVE_STRUCT_KINFO_PROC_FREEBSD
-#include <kvm.h>
-#include <sys/param.h>
-#include <sys/sysctl.h>
-#include <sys/user.h>
-#include <sys/proc.h>
-/* #endif HAVE_LIBKVM_GETPROCS && HAVE_STRUCT_KINFO_PROC_FREEBSD */
-
-#elif HAVE_PROCINFO_H
-#include <procinfo.h>
-#include <sys/types.h>
-
-#define MAXPROCENTRY 32
-#define MAXTHRDENTRY 16
-#define MAXARGLN 1024
-/* #endif HAVE_PROCINFO_H */
-
-#elif KERNEL_SOLARIS
-#define _STRUCTURED_PROC = 1
 #include <procfs.h>
 #include <dirent.h>
-#else
-#error "No applicable input method."
-#endif
 
-#if HAVE_REGEX_H
+
 #include <regex.h>
-#endif
+
 
 #ifndef ARG_MAX
 #define ARG_MAX 4096
@@ -160,9 +84,7 @@ typedef struct procstat_entry_s {
 
 typedef struct procstat {
     char name[PROCSTAT_NAME_LEN];
-#if HAVE_REGEX_H
     regex_t *re;
-#endif
 
     unsigned long num_proc;
     unsigned long num_lwp;
@@ -171,6 +93,7 @@ typedef struct procstat {
     unsigned long vmem_data;
     unsigned long vmem_code;
     unsigned long stack_size;
+    char state;
 
     derive_t vmem_minflt_counter;
     derive_t vmem_majflt_counter;
@@ -190,34 +113,9 @@ typedef struct procstat {
 
 static procstat_t *list_head_g = NULL;
 
-#if HAVE_THREAD_INFO
-static mach_port_t port_host_self;
-static mach_port_t port_task_self;
 
-static processor_set_name_array_t pset_list;
-static mach_msg_type_number_t pset_list_len;
-/* #endif HAVE_THREAD_INFO */
-
-#elif KERNEL_LINUX
-static long pagesize_g;
-/* #endif KERNEL_LINUX */
-#elif KERNEL_SOLARIS
-static int pagesize;
-#elif HAVE_LIBKVM_GETPROCS && HAVE_STRUCT_KINFO_PROC_FREEBSD
-/* no global variables */
-/* #endif HAVE_LIBKVM_GETPROCS && HAVE_STRUCT_KINFO_PROC_FREEBSD */
-
-#elif HAVE_PROCINFO_H
-static struct procentry64 procentry[MAXPROCENTRY];
-static struct thrdentry64 thrdentry[MAXTHRDENTRY];
 static int pagesize;
 
-#ifndef _AIXVERSION_610
-int getprocs64(void *procsinfo, int sizproc, void *fdsinfo, int sizfd, pid_t *index, int count);
-int getthrds64(pid_t, void *, int, tid64_t *, int);
-#endif
-int getargs(struct procentry64 *processBuffer, int bufferLen, char *argsBuffer, int argsLen);
-#endif /* HAVE_PROCINFO_H */
 
 /* put name of process from config to list_head_g tree
    list_head_g is a list of 'procstat_t' structs with
@@ -235,7 +133,7 @@ static void ps_list_register(const char *name, const char *regexp) {
     memset(new, 0, sizeof (procstat_t));
     sstrncpy(new->name, name, sizeof (new->name));
 
-#if HAVE_REGEX_H
+
     if (regexp != NULL) {
         DEBUG("ProcessMatch: adding \"%s\" as criteria to process %s.", regexp, name);
         new->re = (regex_t *) malloc(sizeof (regex_t));
@@ -252,17 +150,6 @@ static void ps_list_register(const char *name, const char *regexp) {
             return;
         }
     }
-#else
-    if (regexp != NULL) {
-        ERROR("processes plugin: ps_list_register: "
-                "Regular expression \"%s\" found in config "
-                "file, but support for regular expressions "
-                "has been disabled at compile time.",
-                regexp);
-        sfree(new);
-        return;
-    }
-#endif
 
     for (ptr = list_head_g; ptr != NULL; ptr = ptr->next) {
         if (strcmp(ptr->name, name) == 0) {
@@ -288,7 +175,7 @@ static void ps_list_register(const char *name, const char *regexp) {
 
 /* try to match name against entry, returns 1 if success */
 static int ps_list_match(const char *name, const char *cmdline, procstat_t *ps) {
-#if HAVE_REGEX_H
+
     if (ps->re != NULL) {
         int status;
         const char *str;
@@ -306,7 +193,7 @@ static int ps_list_match(const char *name, const char *cmdline, procstat_t *ps) 
         if (status == 0)
             return (1);
     } else
-#endif
+
         if (strcmp(ps->name, name) == 0)
         return (1);
 
@@ -532,44 +419,9 @@ static int ps_config(oconfig_item_t *ci) {
 
 static int ps_init(void) {
     printf("Entering ps_init function\n");
-#if HAVE_THREAD_INFO
-    kern_return_t status;
 
-    port_host_self = mach_host_self();
-    port_task_self = mach_task_self();
-
-    if (pset_list != NULL) {
-        vm_deallocate(port_task_self,
-                (vm_address_t) pset_list,
-                pset_list_len * sizeof (processor_set_t));
-        pset_list = NULL;
-        pset_list_len = 0;
-    }
-
-    if ((status = host_processor_sets(port_host_self,
-            &pset_list,
-            &pset_list_len)) != KERN_SUCCESS) {
-        ERROR("host_processor_sets failed: %s\n",
-                mach_error_string(status));
-        pset_list = NULL;
-        pset_list_len = 0;
-        return (-1);
-    }
-    /* #endif HAVE_THREAD_INFO */
-
-#elif KERNEL_LINUX
-    pagesize_g = sysconf(_SC_PAGESIZE);
-    DEBUG("pagesize_g = %li; CONFIG_HZ = %i;",
-            pagesize_g, CONFIG_HZ);
-    /* #endif KERNEL_LINUX */
-
-#elif HAVE_LIBKVM_GETPROCS && HAVE_STRUCT_KINFO_PROC_FREEBSD
-    /* no initialization */
-    /* #endif HAVE_LIBKVM_GETPROCS && HAVE_STRUCT_KINFO_PROC_FREEBSD */
-
-#elif HAVE_PROCINFO_H || KERNEL_SOLARIS
     pagesize = getpagesize();
-#endif /* HAVE_PROCINFO_H */
+
 
     return (0);
 } /* int ps_init */
@@ -677,409 +529,6 @@ static void ps_submit_proc_list(procstat_t *ps) {
             ps->io_rchar, ps->io_wchar, ps->io_syscr, ps->io_syscw);
 } /* void ps_submit_proc_list */
 
-/* ------- additional functions for KERNEL_LINUX/HAVE_THREAD_INFO ------- */
-#if KERNEL_LINUX
-
-static int ps_read_tasks(int pid) {
-    char dirname[64];
-    DIR *dh;
-    struct dirent *ent;
-    int count = 0;
-
-    ssnprintf(dirname, sizeof (dirname), "/proc/%i/task", pid);
-
-    if ((dh = opendir(dirname)) == NULL) {
-        DEBUG("Failed to open directory `%s'", dirname);
-        return (-1);
-    }
-
-    while ((ent = readdir(dh)) != NULL) {
-        if (!isdigit((int) ent->d_name[0]))
-            continue;
-        else
-            count++;
-    }
-    closedir(dh);
-
-    return ((count >= 1) ? count : 1);
-} /* int *ps_read_tasks */
-
-/* Read advanced virtual memory data from /proc/pid/status */
-static procstat_t *ps_read_vmem(int pid, procstat_t *ps) {
-    FILE *fh;
-    char buffer[1024];
-    char filename[64];
-    unsigned long long lib = 0;
-    unsigned long long exe = 0;
-    unsigned long long data = 0;
-    char *fields[8];
-    int numfields;
-
-    ssnprintf(filename, sizeof (filename), "/proc/%i/status", pid);
-    if ((fh = fopen(filename, "r")) == NULL)
-        return (NULL);
-
-    while (fgets(buffer, sizeof (buffer), fh) != NULL) {
-        long long tmp;
-        char *endptr;
-
-        if (strncmp(buffer, "Vm", 2) != 0)
-            continue;
-
-        numfields = strsplit(buffer, fields,
-                STATIC_ARRAY_SIZE(fields));
-
-        if (numfields < 2)
-            continue;
-
-        errno = 0;
-        endptr = NULL;
-        tmp = strtoll(fields[1], &endptr, /* base = */ 10);
-        if ((errno == 0) && (endptr != fields[1])) {
-            if (strncmp(buffer, "VmData", 6) == 0) {
-                data = tmp;
-            } else if (strncmp(buffer, "VmLib", 5) == 0) {
-                lib = tmp;
-            } else if (strncmp(buffer, "VmExe", 5) == 0) {
-                exe = tmp;
-            }
-        }
-    } /* while (fgets) */
-
-    if (fclose(fh)) {
-        char errbuf[1024];
-        WARNING("processes: fclose: %s",
-                sstrerror(errno, errbuf, sizeof (errbuf)));
-    }
-
-    ps->vmem_data = data * 1024;
-    ps->vmem_code = (exe + lib) * 1024;
-
-    return (ps);
-} /* procstat_t *ps_read_vmem */
-
-static procstat_t *ps_read_io(int pid, procstat_t *ps) {
-    FILE *fh;
-    char buffer[1024];
-    char filename[64];
-
-    char *fields[8];
-    int numfields;
-
-    ssnprintf(filename, sizeof (filename), "/proc/%i/io", pid);
-    if ((fh = fopen(filename, "r")) == NULL)
-        return (NULL);
-
-    while (fgets(buffer, sizeof (buffer), fh) != NULL) {
-        derive_t *val = NULL;
-        long long tmp;
-        char *endptr;
-
-        if (strncasecmp(buffer, "rchar:", 6) == 0)
-            val = &(ps->io_rchar);
-        else if (strncasecmp(buffer, "wchar:", 6) == 0)
-            val = &(ps->io_wchar);
-        else if (strncasecmp(buffer, "syscr:", 6) == 0)
-            val = &(ps->io_syscr);
-        else if (strncasecmp(buffer, "syscw:", 6) == 0)
-            val = &(ps->io_syscw);
-        else
-            continue;
-
-        numfields = strsplit(buffer, fields,
-                STATIC_ARRAY_SIZE(fields));
-
-        if (numfields < 2)
-            continue;
-
-        errno = 0;
-        endptr = NULL;
-        tmp = strtoll(fields[1], &endptr, /* base = */ 10);
-        if ((errno != 0) || (endptr == fields[1]))
-            *val = -1;
-        else
-            *val = (derive_t) tmp;
-    } /* while (fgets) */
-
-    if (fclose(fh)) {
-        char errbuf[1024];
-        WARNING("processes: fclose: %s",
-                sstrerror(errno, errbuf, sizeof (errbuf)));
-    }
-
-    return (ps);
-} /* procstat_t *ps_read_io */
-
-int ps_read_process(int pid, procstat_t *ps, char *state) {
-    char filename[64];
-    char buffer[1024];
-
-    char *fields[64];
-    char fields_len;
-
-    int i;
-
-    int name_len;
-
-    derive_t cpu_user_counter;
-    derive_t cpu_system_counter;
-    long long unsigned vmem_size;
-    long long unsigned vmem_rss;
-    long long unsigned stack_size;
-
-    memset(ps, 0, sizeof (procstat_t));
-
-    ssnprintf(filename, sizeof (filename), "/proc/%i/stat", pid);
-
-    i = read_file_contents(filename, buffer, sizeof (buffer) - 1);
-    if (i <= 0)
-        return (-1);
-    buffer[i] = 0;
-
-    fields_len = strsplit(buffer, fields, STATIC_ARRAY_SIZE(fields));
-    if (fields_len < 24) {
-        DEBUG("processes plugin: ps_read_process (pid = %i):"
-                " `%s' has only %i fields..",
-                (int) pid, filename, fields_len);
-        return (-1);
-    }
-
-    /* copy the name, strip brackets in the process */
-    name_len = strlen(fields[1]) - 2;
-    if ((fields[1][0] != '(') || (fields[1][name_len + 1] != ')')) {
-        DEBUG("No brackets found in process name: `%s'", fields[1]);
-        return (-1);
-    }
-    fields[1] = fields[1] + 1;
-    fields[1][name_len] = '\0';
-    strncpy(ps->name, fields[1], PROCSTAT_NAME_LEN);
-
-
-    *state = fields[2][0];
-
-    if (*state == 'Z') {
-        ps->num_lwp = 0;
-        ps->num_proc = 0;
-    } else {
-        if ((ps->num_lwp = ps_read_tasks(pid)) == -1) {
-            /* returns -1 => kernel 2.4 */
-            ps->num_lwp = 1;
-        }
-        ps->num_proc = 1;
-    }
-
-    /* Leave the rest at zero if this is only a zombi */
-    if (ps->num_proc == 0) {
-        DEBUG("processes plugin: This is only a zombi: pid = %i; "
-                "name = %s;", pid, ps->name);
-        return (0);
-    }
-
-    cpu_user_counter = atoll(fields[13]);
-    cpu_system_counter = atoll(fields[14]);
-    vmem_size = atoll(fields[22]);
-    vmem_rss = atoll(fields[23]);
-    ps->vmem_minflt_counter = atoll(fields[9]);
-    ps->vmem_majflt_counter = atoll(fields[11]);
-
-    {
-        unsigned long long stack_start = atoll(fields[27]);
-        unsigned long long stack_ptr = atoll(fields[28]);
-
-        stack_size = (stack_start > stack_ptr)
-                ? stack_start - stack_ptr
-                : stack_ptr - stack_start;
-    }
-
-    /* Convert jiffies to useconds */
-    cpu_user_counter = cpu_user_counter * 1000000 / CONFIG_HZ;
-    cpu_system_counter = cpu_system_counter * 1000000 / CONFIG_HZ;
-    vmem_rss = vmem_rss * pagesize_g;
-
-    if ((ps_read_vmem(pid, ps)) == NULL) {
-        /* No VMem data */
-        ps->vmem_data = -1;
-        ps->vmem_code = -1;
-        DEBUG("ps_read_process: did not get vmem data for pid %i", pid);
-    }
-
-    ps->cpu_user_counter = cpu_user_counter;
-    ps->cpu_system_counter = cpu_system_counter;
-    ps->vmem_size = (unsigned long) vmem_size;
-    ps->vmem_rss = (unsigned long) vmem_rss;
-    ps->stack_size = (unsigned long) stack_size;
-
-    if ((ps_read_io(pid, ps)) == NULL) {
-        /* no io data */
-        ps->io_rchar = -1;
-        ps->io_wchar = -1;
-        ps->io_syscr = -1;
-        ps->io_syscw = -1;
-
-        DEBUG("ps_read_process: not get io data for pid %i", pid);
-    }
-
-    /* success */
-    return (0);
-} /* int ps_read_process (...) */
-
-static char *ps_get_cmdline(pid_t pid, char *name, char *buf, size_t buf_len) {
-    char *buf_ptr;
-    size_t len;
-
-    char file[PATH_MAX];
-    int fd;
-
-    size_t n;
-
-    if ((pid < 1) || (NULL == buf) || (buf_len < 2))
-        return NULL;
-
-    ssnprintf(file, sizeof (file), "/proc/%u/cmdline",
-            (unsigned int) pid);
-
-    errno = 0;
-    fd = open(file, O_RDONLY);
-    if (fd < 0) {
-        char errbuf[4096];
-        /* ENOENT means the process exited while we were handling it.
-         * Don't complain about this, it only fills the logs. */
-        if (errno != ENOENT)
-            WARNING("processes plugin: Failed to open `%s': %s.", file,
-                sstrerror(errno, errbuf, sizeof (errbuf)));
-        return NULL;
-    }
-
-    buf_ptr = buf;
-    len = buf_len;
-
-    n = 0;
-
-    while (42) {
-        ssize_t status;
-
-        status = read(fd, (void *) buf_ptr, len);
-
-        if (status < 0) {
-            char errbuf[1024];
-
-            if ((EAGAIN == errno) || (EINTR == errno))
-                continue;
-
-            WARNING("processes plugin: Failed to read from `%s': %s.", file,
-                    sstrerror(errno, errbuf, sizeof (errbuf)));
-            close(fd);
-            return NULL;
-        }
-
-        n += status;
-
-        if (status == 0)
-            break;
-
-        buf_ptr += status;
-        len -= status;
-
-        if (len <= 0)
-            break;
-    }
-
-    close(fd);
-
-    if (0 == n) {
-        /* cmdline not available; e.g. kernel thread, zombie */
-        if (NULL == name)
-            return NULL;
-
-        ssnprintf(buf, buf_len, "[%s]", name);
-        return buf;
-    }
-
-    assert(n <= buf_len);
-
-    if (n == buf_len)
-        --n;
-    buf[n] = '\0';
-
-    --n;
-    /* remove trailing whitespace */
-    while ((n > 0) && (isspace(buf[n]) || ('\0' == buf[n]))) {
-        buf[n] = '\0';
-        --n;
-    }
-
-    /* arguments are separated by '\0' in /proc/<pid>/cmdline */
-    while (n > 0) {
-        if ('\0' == buf[n])
-            buf[n] = ' ';
-        --n;
-    }
-    return buf;
-} /* char *ps_get_cmdline (...) */
-
-static unsigned long read_fork_rate() {
-    FILE *proc_stat;
-    char buf[1024];
-    unsigned long result = 0;
-    int numfields;
-    char *fields[3];
-
-    proc_stat = fopen("/proc/stat", "r");
-    if (proc_stat == NULL) {
-        char errbuf[1024];
-        ERROR("processes plugin: fopen (/proc/stat) failed: %s",
-                sstrerror(errno, errbuf, sizeof (errbuf)));
-        return ULONG_MAX;
-    }
-
-    while (fgets(buf, sizeof (buf), proc_stat) != NULL) {
-        char *endptr;
-
-        numfields = strsplit(buf, fields, STATIC_ARRAY_SIZE(fields));
-        if (numfields != 2)
-            continue;
-
-        if (strcmp("processes", fields[0]) != 0)
-            continue;
-
-        errno = 0;
-        endptr = NULL;
-        result = strtoul(fields[1], &endptr, /* base = */ 10);
-        if ((endptr == fields[1]) || (errno != 0)) {
-            ERROR("processes plugin: Cannot parse fork rate: %s",
-                    fields[1]);
-            result = ULONG_MAX;
-            break;
-        }
-
-        break;
-    }
-
-    fclose(proc_stat);
-
-    return result;
-}
-
-static void ps_submit_fork_rate(unsigned long value) {
-    value_t values[1];
-    value_list_t vl = VALUE_LIST_INIT;
-
-    values[0].derive = (derive_t) value;
-
-    vl.values = values;
-    vl.values_len = 1;
-    sstrncpy(vl.host, hostname_g, sizeof (vl.host));
-    sstrncpy(vl.plugin, "processes", sizeof (vl.plugin));
-    sstrncpy(vl.plugin_instance, "", sizeof (vl.plugin_instance));
-    sstrncpy(vl.type, "fork_rate", sizeof (vl.type));
-    sstrncpy(vl.type_instance, "", sizeof (vl.type_instance));
-
-    plugin_dispatch_values(&vl);
-}
-
-#endif /* KERNEL_LINUX */
-
-#if KERNEL_SOLARIS
 
 static char *ps_get_cmdline(pid_t pid) {
     char f_psinfo[64];
@@ -1098,29 +547,23 @@ static char *ps_get_cmdline(pid_t pid) {
     return buffer;
 }
 
-static int ps_read_process(int pid, procstat_t *ps, char *state) {
+static int psrp(int pid, procstat_t *ps, char *state) {
+
     printf("Inside ps_read_process\n");
     char filename[64];
     char f_psinfo[64], f_usage[64];
     int i;
-    char *buffer;
-
+    char *buffer;   
+        
 
     pstatus_t *myStatus;
     psinfo_t *myInfo;
     prusage_t *myUsage;
 
-    /*
-        long long unsigned vmem_size;
-        long long unsigned vmem_rss;
-        long long unsigned stack_size;
-     */
-
-
     snprintf(filename, sizeof (filename), "/proc/%i/status", pid);
     snprintf(f_psinfo, sizeof (f_psinfo), "/proc/%i/psinfo", pid);
     snprintf(f_usage, sizeof (f_usage), "/proc/%i/usage", pid);
-
+  
 
     buffer = malloc(sizeof (pstatus_t));
     read_file_contents(filename, buffer, sizeof (pstatus_t));
@@ -1135,14 +578,15 @@ static int ps_read_process(int pid, procstat_t *ps, char *state) {
     read_file_contents(f_usage, buffer, sizeof (prusage_t));
     myUsage = (prusage_t *) buffer;
 
-
-    strncpy(ps->name, myInfo->pr_fname, sizeof (myInfo->pr_fname));
+    printf("myInfo->pr_fname=%s\n", myInfo->pr_fname);
+    sstrncpy(ps->name, myInfo->pr_fname, sizeof (myInfo->pr_fname));    
+    printf("Mark 2\n");
     ps->num_lwp = myStatus->pr_nlwp;
     if (myInfo->pr_wstat != 0) {
         ps->num_proc = 0;
         ps->num_lwp = 0;
-        *state = (char) 'Z';
-        return (0);
+        *state = (char) 'Z';        
+        return(0);
     } else {
         ps->num_proc = 1;
         ps->num_lwp = myInfo->pr_nlwp;
@@ -1154,25 +598,29 @@ static int ps_read_process(int pid, procstat_t *ps, char *state) {
      */
     ps->cpu_system_counter = myStatus -> pr_stime.tv_nsec / 1000;
     ps->cpu_user_counter = myStatus -> pr_utime.tv_nsec / 1000;
+     
     /*
      * Convert rssize from KB to bytes to be consistent w/ the linux module
      */
     ps->vmem_rss = myInfo->pr_rssize * 1024;
     ps->vmem_size = myInfo->pr_size * 1024;
-
     ps->vmem_minflt_counter = myUsage->pr_minf;
     ps->vmem_majflt_counter = myUsage->pr_majf;
+
     /*
      * TODO: Data and code segment calculations for Solaris
      */
+
     ps->vmem_data = -1;
     ps->vmem_code = -1;
     ps->stack_size = myStatus->pr_stksize;
+
     /*
      * Calculating input/ouput chars
      * Formula used is total chars / total blocks => chars/block
      * then convert input/output blocks to chars
      */
+
 
     ulong_t tot_chars = myUsage->pr_ioch;
     ulong_t tot_blocks = myUsage->pr_inblk + myUsage->pr_oublk;
@@ -1184,9 +632,11 @@ static int ps_read_process(int pid, procstat_t *ps, char *state) {
     ps->io_syscr = myUsage->pr_sysc;
     ps->io_syscw = myUsage->pr_sysc;
 
+
     /*
      * TODO: Find way of setting BLOCKED and PAGING status
      */
+
     *state = (char) 'R';
     if (myStatus->pr_flags & PR_ASLEEP)
         *state = (char) 'S';
@@ -1196,715 +646,63 @@ static int ps_read_process(int pid, procstat_t *ps, char *state) {
     free(myStatus);
     free(myInfo);
     free(myUsage);
-    return (0);
+    printf("Mark 100\n");
+
+    return(0);
 }
-#endif
 
-#if HAVE_THREAD_INFO
-
-static int mach_get_task_name(task_t t, int *pid, char *name, size_t name_max_len) {
-    int mib[4];
-
-    struct kinfo_proc kp;
-    size_t kp_size;
-
-    mib[0] = CTL_KERN;
-    mib[1] = KERN_PROC;
-    mib[2] = KERN_PROC_PID;
-
-    if (pid_for_task(t, pid) != KERN_SUCCESS)
-        return (-1);
-    mib[3] = *pid;
-
-    kp_size = sizeof (kp);
-    if (sysctl(mib, 4, &kp, &kp_size, NULL, 0) != 0)
-        return (-1);
-
-    if (name_max_len > (MAXCOMLEN + 1))
-        name_max_len = MAXCOMLEN + 1;
-
-    strncpy(name, kp.kp_proc.p_comm, name_max_len - 1);
-    name[name_max_len - 1] = '\0';
-
-    DEBUG("pid = %i; name = %s;", *pid, name);
-
-    /* We don't do the special handling for `p_comm == "LaunchCFMApp"' as
-     * `top' does it, because it is a lot of work and only used when
-     * debugging. -octo */
-
-    return (0);
-}
-#endif /* HAVE_THREAD_INFO */
-/* ------- end of additional functions for KERNEL_LINUX/HAVE_THREAD_INFO ------- */
 
 /* do actual readings from kernel */
-static int ps_read(void) {
-    printf("Entering ps_read function\n");
-#if HAVE_THREAD_INFO
-    kern_return_t status;
 
-    int pset;
-    processor_set_t port_pset_priv;
-
-    int task;
-    task_array_t task_list;
-    mach_msg_type_number_t task_list_len;
-
-    int task_pid;
-    char task_name[MAXCOMLEN + 1];
-
-    int thread;
-    thread_act_array_t thread_list;
-    mach_msg_type_number_t thread_list_len;
-    thread_basic_info_data_t thread_data;
-    mach_msg_type_number_t thread_data_len;
-
-    int running = 0;
-    int sleeping = 0;
-    int zombies = 0;
-    int stopped = 0;
-    int blocked = 0;
-
-    procstat_t *ps;
-    procstat_entry_t pse;
-
-    ps_list_reset();
-
-    /*
-     * The Mach-concept is a little different from the traditional UNIX
-     * concept: All the work is done in threads. Threads are contained in
-     * `tasks'. Therefore, `task status' doesn't make much sense, since
-     * it's actually a `thread status'.
-     * Tasks are assigned to sets of processors, so that's where you go to
-     * get a list.
-     */
-    for (pset = 0; pset < pset_list_len; pset++) {
-        if ((status = host_processor_set_priv(port_host_self,
-                pset_list[pset],
-                &port_pset_priv)) != KERN_SUCCESS) {
-            ERROR("host_processor_set_priv failed: %s\n",
-                    mach_error_string(status));
-            continue;
-        }
-
-        if ((status = processor_set_tasks(port_pset_priv,
-                &task_list,
-                &task_list_len)) != KERN_SUCCESS) {
-            ERROR("processor_set_tasks failed: %s\n",
-                    mach_error_string(status));
-            mach_port_deallocate(port_task_self, port_pset_priv);
-            continue;
-        }
-
-        for (task = 0; task < task_list_len; task++) {
-            ps = NULL;
-            if (mach_get_task_name(task_list[task],
-                    &task_pid,
-                    task_name, PROCSTAT_NAME_LEN) == 0) {
-                /* search for at least one match */
-                for (ps = list_head_g; ps != NULL; ps = ps->next)
-                    /* FIXME: cmdline should be here instead of NULL */
-                    if (ps_list_match(task_name, NULL, ps) == 1)
-                        break;
-            }
-
-            /* Collect more detailed statistics for this process */
-            if (ps != NULL) {
-                task_basic_info_data_t task_basic_info;
-                mach_msg_type_number_t task_basic_info_len;
-                task_events_info_data_t task_events_info;
-                mach_msg_type_number_t task_events_info_len;
-                task_absolutetime_info_data_t task_absolutetime_info;
-                mach_msg_type_number_t task_absolutetime_info_len;
-
-                memset(&pse, '\0', sizeof (pse));
-                pse.id = task_pid;
-
-                task_basic_info_len = TASK_BASIC_INFO_COUNT;
-                status = task_info(task_list[task],
-                        TASK_BASIC_INFO,
-                        (task_info_t) & task_basic_info,
-                        &task_basic_info_len);
-                if (status != KERN_SUCCESS) {
-                    ERROR("task_info failed: %s",
-                            mach_error_string(status));
-                    continue; /* with next thread_list */
-                }
-
-                task_events_info_len = TASK_EVENTS_INFO_COUNT;
-                status = task_info(task_list[task],
-                        TASK_EVENTS_INFO,
-                        (task_info_t) & task_events_info,
-                        &task_events_info_len);
-                if (status != KERN_SUCCESS) {
-                    ERROR("task_info failed: %s",
-                            mach_error_string(status));
-                    continue; /* with next thread_list */
-                }
-
-                task_absolutetime_info_len = TASK_ABSOLUTETIME_INFO_COUNT;
-                status = task_info(task_list[task],
-                        TASK_ABSOLUTETIME_INFO,
-                        (task_info_t) & task_absolutetime_info,
-                        &task_absolutetime_info_len);
-                if (status != KERN_SUCCESS) {
-                    ERROR("task_info failed: %s",
-                            mach_error_string(status));
-                    continue; /* with next thread_list */
-                }
-
-                pse.num_proc++;
-                pse.vmem_size = task_basic_info.virtual_size;
-                pse.vmem_rss = task_basic_info.resident_size;
-                /* Does not seem to be easily exposed */
-                pse.vmem_data = 0;
-                pse.vmem_code = 0;
-
-                pse.vmem_minflt_counter = task_events_info.cow_faults;
-                pse.vmem_majflt_counter = task_events_info.faults;
-
-                pse.cpu_user_counter = task_absolutetime_info.total_user;
-                pse.cpu_system_counter = task_absolutetime_info.total_system;
-            }
-
-            status = task_threads(task_list[task], &thread_list,
-                    &thread_list_len);
-            if (status != KERN_SUCCESS) {
-                /* Apple's `top' treats this case a zombie. It
-                 * makes sense to some extend: A `zombie'
-                 * thread is nonsense, since the task/process
-                 * is dead. */
-                zombies++;
-                DEBUG("task_threads failed: %s",
-                        mach_error_string(status));
-                if (task_list[task] != port_task_self)
-                    mach_port_deallocate(port_task_self,
-                        task_list[task]);
-                continue; /* with next task_list */
-            }
-
-            for (thread = 0; thread < thread_list_len; thread++) {
-                thread_data_len = THREAD_BASIC_INFO_COUNT;
-                status = thread_info(thread_list[thread],
-                        THREAD_BASIC_INFO,
-                        (thread_info_t) & thread_data,
-                        &thread_data_len);
-                if (status != KERN_SUCCESS) {
-                    ERROR("thread_info failed: %s",
-                            mach_error_string(status));
-                    if (task_list[task] != port_task_self)
-                        mach_port_deallocate(port_task_self,
-                            thread_list[thread]);
-                    continue; /* with next thread_list */
-                }
-
-                if (ps != NULL)
-                    pse.num_lwp++;
-
-                switch (thread_data.run_state) {
-                    case TH_STATE_RUNNING:
-                        running++;
-                        break;
-                    case TH_STATE_STOPPED:
-                        /* What exactly is `halted'? */
-                    case TH_STATE_HALTED:
-                        stopped++;
-                        break;
-                    case TH_STATE_WAITING:
-                        sleeping++;
-                        break;
-                    case TH_STATE_UNINTERRUPTIBLE:
-                        blocked++;
-                        break;
-                        /* There is no `zombie' case here,
-                         * since there are no zombie-threads.
-                         * There's only zombie tasks, which are
-                         * handled above. */
-                    default:
-                        WARNING("Unknown thread status: %i",
-                                thread_data.run_state);
-                        break;
-                } /* switch (thread_data.run_state) */
-
-                if (task_list[task] != port_task_self) {
-                    status = mach_port_deallocate(port_task_self,
-                            thread_list[thread]);
-                    if (status != KERN_SUCCESS)
-                        ERROR("mach_port_deallocate failed: %s",
-                            mach_error_string(status));
-                }
-            } /* for (thread_list) */
-
-            if ((status = vm_deallocate(port_task_self,
-                    (vm_address_t) thread_list,
-                    thread_list_len * sizeof (thread_act_t)))
-                    != KERN_SUCCESS) {
-                ERROR("vm_deallocate failed: %s",
-                        mach_error_string(status));
-            }
-            thread_list = NULL;
-            thread_list_len = 0;
-
-            /* Only deallocate the task port, if it isn't our own.
-             * Don't know what would happen in that case, but this
-             * is what Apple's top does.. ;) */
-            if (task_list[task] != port_task_self) {
-                status = mach_port_deallocate(port_task_self,
-                        task_list[task]);
-                if (status != KERN_SUCCESS)
-                    ERROR("mach_port_deallocate failed: %s",
-                        mach_error_string(status));
-            }
-
-            if (ps != NULL)
-                /* FIXME: cmdline should be here instead of NULL */
-                ps_list_add(task_name, NULL, &pse);
-        } /* for (task_list) */
-
-        if ((status = vm_deallocate(port_task_self,
-                (vm_address_t) task_list,
-                task_list_len * sizeof (task_t))) != KERN_SUCCESS) {
-            ERROR("vm_deallocate failed: %s",
-                    mach_error_string(status));
-        }
-        task_list = NULL;
-        task_list_len = 0;
-
-        if ((status = mach_port_deallocate(port_task_self, port_pset_priv))
-                != KERN_SUCCESS) {
-            ERROR("mach_port_deallocate failed: %s",
-                    mach_error_string(status));
-        }
-    } /* for (pset_list) */
-
-    ps_submit_state("running", running);
-    ps_submit_state("sleeping", sleeping);
-    ps_submit_state("zombies", zombies);
-    ps_submit_state("stopped", stopped);
-    ps_submit_state("blocked", blocked);
-
-    for (ps = list_head_g; ps != NULL; ps = ps->next)
-        ps_submit_proc_list(ps);
-    /* #endif HAVE_THREAD_INFO */
-
-#elif KERNEL_LINUX
+static int ps_read(void) {    
     int running = 0;
     int sleeping = 0;
     int zombies = 0;
     int stopped = 0;
     int paging = 0;
     int blocked = 0;
-
     struct dirent *ent;
     DIR *proc;
     int pid;
-
+/*
     char cmdline[ARG_MAX];
+*/
 
     int status;
-    procstat_t ps;
-    procstat_entry_t pse;
-    char state;
-
-    unsigned long fork_rate;
-
-    procstat_t *ps_ptr;
-
-    running = sleeping = zombies = stopped = paging = blocked = 0;
-    ps_list_reset();
-
-    if ((proc = opendir("/proc")) == NULL) {
-        char errbuf[1024];
-        ERROR("Cannot open `/proc': %s",
-                sstrerror(errno, errbuf, sizeof (errbuf)));
-        return (-1);
-    }
-
-    while ((ent = readdir(proc)) != NULL) {
-        if (!isdigit(ent->d_name[0]))
-            continue;
-
-        if ((pid = atoi(ent->d_name)) < 1)
-            continue;
-
-        status = ps_read_process(pid, &ps, &state);
-        if (status != 0) {
-            DEBUG("ps_read_process failed: %i", status);
-            continue;
-        }
-
-        pse.id = pid;
-        pse.age = 0;
-
-        pse.num_proc = ps.num_proc;
-        pse.num_lwp = ps.num_lwp;
-        pse.vmem_size = ps.vmem_size;
-        pse.vmem_rss = ps.vmem_rss;
-        pse.vmem_data = ps.vmem_data;
-        pse.vmem_code = ps.vmem_code;
-        pse.stack_size = ps.stack_size;
-
-        pse.vmem_minflt = 0;
-        pse.vmem_minflt_counter = ps.vmem_minflt_counter;
-        pse.vmem_majflt = 0;
-        pse.vmem_majflt_counter = ps.vmem_majflt_counter;
-
-        pse.cpu_user = 0;
-        pse.cpu_user_counter = ps.cpu_user_counter;
-        pse.cpu_system = 0;
-        pse.cpu_system_counter = ps.cpu_system_counter;
-
-        pse.io_rchar = ps.io_rchar;
-        pse.io_wchar = ps.io_wchar;
-        pse.io_syscr = ps.io_syscr;
-        pse.io_syscw = ps.io_syscw;
-
-        switch (state) {
-            case 'R': running++;
-                break;
-            case 'S': sleeping++;
-                break;
-            case 'D': blocked++;
-                break;
-            case 'Z': zombies++;
-                break;
-            case 'T': stopped++;
-                break;
-            case 'W': paging++;
-                break;
-        }
-
-        ps_list_add(ps.name,
-                ps_get_cmdline(pid, ps.name, cmdline, sizeof (cmdline)),
-                &pse);
-    }
-
-    closedir(proc);
-
-    ps_submit_state("running", running);
-    ps_submit_state("sleeping", sleeping);
-    ps_submit_state("zombies", zombies);
-    ps_submit_state("stopped", stopped);
-    ps_submit_state("paging", paging);
-    ps_submit_state("blocked", blocked);
-
-    for (ps_ptr = list_head_g; ps_ptr != NULL; ps_ptr = ps_ptr->next)
-        ps_submit_proc_list(ps_ptr);
-
-    fork_rate = read_fork_rate();
-    if (fork_rate != ULONG_MAX)
-        ps_submit_fork_rate(fork_rate);
-    /* #endif KERNEL_LINUX */
-
-#elif HAVE_LIBKVM_GETPROCS && HAVE_STRUCT_KINFO_PROC_FREEBSD
-    int running = 0;
-    int sleeping = 0;
-    int zombies = 0;
-    int stopped = 0;
-    int blocked = 0;
-    int idle = 0;
-    int wait = 0;
-
-    kvm_t *kd;
-    char errbuf[1024];
-    char cmdline[ARG_MAX];
-    char *cmdline_ptr;
-    struct kinfo_proc *procs; /* array of processes */
-    char **argv;
-    int count; /* returns number of processes */
-    int i;
-
-    procstat_t *ps_ptr;
-    procstat_entry_t pse;
-
-    ps_list_reset();
-
-    /* Open the kvm interface, get a descriptor */
-    kd = kvm_open(NULL, NULL, NULL, 0, errbuf);
-    if (kd == NULL) {
-        ERROR("processes plugin: Cannot open kvm interface: %s",
-                errbuf);
-        return (0);
-    }
-
-    /* Get the list of processes. */
-    procs = kvm_getprocs(kd, KERN_PROC_ALL, 0, &count);
-    if (procs == NULL) {
-        ERROR("processes plugin: Cannot get kvm processes list: %s",
-                kvm_geterr(kd));
-        kvm_close(kd);
-        return (0);
-    }
-
-    /* Iterate through the processes in kinfo_proc */
-    for (i = 0; i < count; i++) {
-        /* retrieve the arguments */
-        cmdline[0] = 0;
-        cmdline_ptr = NULL;
-
-        argv = kvm_getargv(kd, (const struct kinfo_proc *) &(procs[i]), 0);
-        if (argv != NULL) {
-            int status;
-            int argc;
-
-            argc = 0;
-            while (argv[argc] != NULL)
-                argc++;
-
-            status = strjoin(cmdline, sizeof (cmdline),
-                    argv, argc, " ");
-
-            if (status < 0) {
-                WARNING("processes plugin: Command line did "
-                        "not fit into buffer.");
-            } else {
-                cmdline_ptr = &cmdline[0];
-            }
-        }
-
-        pse.id = procs[i].ki_pid;
-        pse.age = 0;
-
-        pse.num_proc = 1;
-        pse.num_lwp = procs[i].ki_numthreads;
-
-        pse.vmem_size = procs[i].ki_size;
-        pse.vmem_rss = procs[i].ki_rssize * getpagesize();
-        pse.vmem_data = procs[i].ki_dsize * getpagesize();
-        pse.vmem_code = procs[i].ki_tsize * getpagesize();
-        pse.stack_size = procs[i].ki_ssize * getpagesize();
-        pse.vmem_minflt = 0;
-        pse.vmem_minflt_counter = procs[i].ki_rusage.ru_minflt;
-        pse.vmem_majflt = 0;
-        pse.vmem_majflt_counter = procs[i].ki_rusage.ru_majflt;
-
-        pse.cpu_user = 0;
-        pse.cpu_user_counter = procs[i].ki_rusage.ru_utime.tv_sec
-                * 1000
-                + procs[i].ki_rusage.ru_utime.tv_usec;
-        pse.cpu_system = 0;
-        pse.cpu_system_counter = procs[i].ki_rusage.ru_stime.tv_sec
-                * 1000
-                + procs[i].ki_rusage.ru_stime.tv_usec;
-
-        /* no io data */
-        pse.io_rchar = -1;
-        pse.io_wchar = -1;
-        pse.io_syscr = -1;
-        pse.io_syscw = -1;
-
-        switch (procs[i].ki_stat) {
-            case SSTOP: stopped++;
-                break;
-            case SSLEEP: sleeping++;
-                break;
-            case SRUN: running++;
-                break;
-            case SIDL: idle++;
-                break;
-            case SWAIT: wait++;
-                break;
-            case SLOCK: blocked++;
-                break;
-            case SZOMB: zombies++;
-                break;
-        }
-
-        ps_list_add(procs[i].ki_comm, cmdline_ptr, &pse);
-    }
-
-    kvm_close(kd);
-
-    ps_submit_state("running", running);
-    ps_submit_state("sleeping", sleeping);
-    ps_submit_state("zombies", zombies);
-    ps_submit_state("stopped", stopped);
-    ps_submit_state("blocked", blocked);
-    ps_submit_state("idle", idle);
-    ps_submit_state("wait", wait);
-
-    for (ps_ptr = list_head_g; ps_ptr != NULL; ps_ptr = ps_ptr->next)
-        ps_submit_proc_list(ps_ptr);
-    /* #endif HAVE_LIBKVM_GETPROCS && HAVE_STRUCT_KINFO_PROC_FREEBSD */
-
-#elif HAVE_PROCINFO_H
-    /* AIX */
-    int running = 0;
-    int sleeping = 0;
-    int zombies = 0;
-    int stopped = 0;
-    int paging = 0;
-    int blocked = 0;
-
-    pid_t pindex = 0;
-    int nprocs;
-
-    procstat_t *ps;
-    procstat_entry_t pse;
-
-    ps_list_reset();
-    while ((nprocs = getprocs64(procentry, sizeof (struct procentry64),
-            /* fdsinfo = */ NULL, sizeof (struct fdsinfo64),
-            &pindex, MAXPROCENTRY)) > 0) {
-        int i;
-
-        for (i = 0; i < nprocs; i++) {
-            tid64_t thindex;
-            int nthreads;
-            char arglist[MAXARGLN + 1];
-            char *cargs;
-            char *cmdline;
-
-            if (procentry[i].pi_state == SNONE) continue;
-            /* if (procentry[i].pi_state == SZOMB)  FIXME */
-
-            cmdline = procentry[i].pi_comm;
-            cargs = procentry[i].pi_comm;
-            if (procentry[i].pi_flags & SKPROC) {
-                if (procentry[i].pi_pid == 0)
-                    cmdline = "swapper";
-                cargs = cmdline;
-            } else {
-                if (getargs(&procentry[i], sizeof (struct procentry64), arglist, MAXARGLN) >= 0) {
-                    int n;
-
-                    n = -1;
-                    while (++n < MAXARGLN) {
-                        if (arglist[n] == '\0') {
-                            if (arglist[n + 1] == '\0')
-                                break;
-                            arglist[n] = ' ';
-                        }
-                    }
-                    cargs = arglist;
-                }
-            }
-
-            pse.id = procentry[i].pi_pid;
-            pse.age = 0;
-            pse.num_lwp = procentry[i].pi_thcount;
-            pse.num_proc = 1;
-
-            thindex = 0;
-            while ((nthreads = getthrds64(procentry[i].pi_pid,
-                    thrdentry, sizeof (struct thrdentry64),
-                    &thindex, MAXTHRDENTRY)) > 0) {
-                int j;
-
-                for (j = 0; j < nthreads; j++) {
-                    switch (thrdentry[j].ti_state) {
-                            /* case TSNONE: break; */
-                        case TSIDL: blocked++;
-                            break; /* FIXME is really blocked */
-                        case TSRUN: running++;
-                            break;
-                        case TSSLEEP: sleeping++;
-                            break;
-                        case TSSWAP: paging++;
-                            break;
-                        case TSSTOP: stopped++;
-                            break;
-                        case TSZOMB: zombies++;
-                            break;
-                    }
-                }
-                if (nthreads < MAXTHRDENTRY)
-                    break;
-            }
-
-            pse.cpu_user = 0;
-            /* tv_usec is nanosec ??? */
-            pse.cpu_user_counter = procentry[i].pi_ru.ru_utime.tv_sec * 1000000 +
-                    procentry[i].pi_ru.ru_utime.tv_usec / 1000;
-
-            pse.cpu_system = 0;
-            /* tv_usec is nanosec ??? */
-            pse.cpu_system_counter = procentry[i].pi_ru.ru_stime.tv_sec * 1000000 +
-                    procentry[i].pi_ru.ru_stime.tv_usec / 1000;
-
-            pse.vmem_minflt = 0;
-            pse.vmem_minflt_counter = procentry[i].pi_minflt;
-            pse.vmem_majflt = 0;
-            pse.vmem_majflt_counter = procentry[i].pi_majflt;
-
-            pse.vmem_size = procentry[i].pi_tsize + procentry[i].pi_dvm * pagesize;
-            pse.vmem_rss = (procentry[i].pi_drss + procentry[i].pi_trss) * pagesize;
-            /* Not supported */
-            pse.vmem_data = 0;
-            pse.vmem_code = 0;
-            pse.stack_size = 0;
-
-            pse.io_rchar = -1;
-            pse.io_wchar = -1;
-            pse.io_syscr = -1;
-            pse.io_syscw = -1;
-
-            ps_list_add(cmdline, cargs, &pse);
-        } /* for (i = 0 .. nprocs) */
-
-        if (nprocs < MAXPROCENTRY)
-            break;
-    } /* while (getprocs64() > 0) */
-    ps_submit_state("running", running);
-    ps_submit_state("sleeping", sleeping);
-    ps_submit_state("zombies", zombies);
-    ps_submit_state("stopped", stopped);
-    ps_submit_state("paging", paging);
-    ps_submit_state("blocked", blocked);
-
-    for (ps = list_head_g; ps != NULL; ps = ps->next)
-        ps_submit_proc_list(ps);
-    /* HAVE_PROCINFO_H */
-#elif KERNEL_SOLARIS
-    int running = 0;
-    int sleeping = 0;
-    int zombies = 0;
-    int stopped = 0;
-    int paging = 0;
-    int blocked = 0;
-
-    struct dirent *ent;
-    DIR *proc;
-    int pid;
-
-    char cmdline[ARG_MAX];
-
-    int status;
-    procstat_t ps;
+    struct procstat ps;
     procstat_entry_t pse; 
     char state;
-
+/*
     unsigned long fork_rate;
+*/
 
+    printf("Mark ps_ptr\n");
+/*
     procstat_t *ps_ptr;
-
-    running = sleeping = zombies = stopped = paging = blocked = 0;    
+*/
+    
+    printf("Reset list 0\n");
     ps_list_reset();    
+    printf("Reset list\n");
+
 
     proc = opendir("/proc");
     if (proc == NULL) {        
         return (-1);
     }
 
-
     while ((ent = readdir(proc)) != NULL) {
             if (!isdigit(ent->d_name[0]))
                 continue;
 
             if ((pid = atoi(ent->d_name)) < 1)                
-                continue;          
-    
-
-            printf("Calling ps_read_process\n");
-            ps_read_process(pid, &ps, &state);            
+                continue;       
             
-            //status = ps_read_process(pid, &ps, &state);            
-            /*if (status != 0) {
-                printf("ps_read_process failed: %i", status);                
+            status = psrp(pid, &ps, &state);
+            if (status != 0) {
+                DEBUG("ps_read_process failed: %i", status);                
                 continue;
             }
-            
-
             pse.id = pid;
             pse.age = 0;
 
@@ -1930,7 +728,7 @@ static int ps_read(void) {
             pse.io_wchar = ps.io_wchar;
             pse.io_syscr = ps.io_syscr;
             pse.io_syscw = ps.io_syscw;
-
+            
             switch (state) {
                 case 'R': running++;
                     break;
@@ -1945,20 +743,17 @@ static int ps_read(void) {
                 case 'W': paging++;
                     break;
             }
-
-           ps_list_add(ps.name, "", &pse);
- */
- 
-        }
+            
+            ps_list_add(ps.name, "", &pse);
+            
+    } // while()
+    closedir(proc);
     
-        closedir(proc);
-     
-#endif
-    return (0);
+    return(0);
 } /* int ps_read */
 
 void module_register(void) {
     plugin_register_complex_config("processes", ps_config);
-    plugin_register_init("processes", ps_init);
-    plugin_register_read("processes", ps_read);
+    plugin_register_init("processes", ps_init);    
+    plugin_register_read("processes", ps_read);        
 } /* void module_register */
