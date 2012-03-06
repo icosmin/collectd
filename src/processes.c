@@ -116,7 +116,6 @@ static procstat_t *list_head_g = NULL;
 
 static int pagesize;
 
-
 /* put name of process from config to list_head_g tree
    list_head_g is a list of 'procstat_t' structs with
    processes names we want to watch */
@@ -132,7 +131,6 @@ static void ps_list_register(const char *name, const char *regexp) {
     }
     memset(new, 0, sizeof (procstat_t));
     sstrncpy(new->name, name, sizeof (new->name));
-
 
     if (regexp != NULL) {
         DEBUG("ProcessMatch: adding \"%s\" as criteria to process %s.", regexp, name);
@@ -190,8 +188,9 @@ static int ps_list_match(const char *name, const char *cmdline, procstat_t *ps) 
                 /* nmatch = */ 0,
                 /* pmatch = */ NULL,
                 /* eflags = */ 0);
-        if (status == 0)
+        if (status == 0) {
             return (1);
+        }
     } else
 
         if (strcmp(ps->name, name) == 0)
@@ -366,7 +365,6 @@ static void ps_list_reset(void) {
 static int ps_config(oconfig_item_t *ci) {
     int i;
 
-    printf("Entering ps_config function\n");
     for (i = 0; i < ci->children_num; ++i) {
         oconfig_item_t *c = ci->children + i;
 
@@ -418,7 +416,7 @@ static int ps_config(oconfig_item_t *ci) {
 }
 
 static int ps_init(void) {
-    printf("Entering ps_init function\n");
+    
 
     pagesize = getpagesize();
 
@@ -529,10 +527,9 @@ static void ps_submit_proc_list(procstat_t *ps) {
             ps->io_rchar, ps->io_wchar, ps->io_syscr, ps->io_syscw);
 } /* void ps_submit_proc_list */
 
-
 static char *ps_get_cmdline(pid_t pid) {
     char f_psinfo[64];
-    char *buffer;
+    char *buffer = NULL;
     psinfo_t *myInfo;
 
     snprintf(f_psinfo, sizeof (f_psinfo), "/proc/%i/psinfo", pid);
@@ -543,18 +540,18 @@ static char *ps_get_cmdline(pid_t pid) {
     myInfo = (psinfo_t *) buffer;
 
     sstrncpy(buffer, myInfo->pr_psargs, sizeof (myInfo->pr_psargs));
+
     free(myInfo);
-    return buffer;
+    return strtok(buffer, " ");
 }
 
 static int psrp(int pid, procstat_t *ps, char *state) {
 
-    printf("Inside ps_read_process\n");
     char filename[64];
     char f_psinfo[64], f_usage[64];
     int i;
-    char *buffer;   
-        
+    char *buffer;
+
 
     pstatus_t *myStatus;
     psinfo_t *myInfo;
@@ -563,7 +560,7 @@ static int psrp(int pid, procstat_t *ps, char *state) {
     snprintf(filename, sizeof (filename), "/proc/%i/status", pid);
     snprintf(f_psinfo, sizeof (f_psinfo), "/proc/%i/psinfo", pid);
     snprintf(f_usage, sizeof (f_usage), "/proc/%i/usage", pid);
-  
+
 
     buffer = malloc(sizeof (pstatus_t));
     read_file_contents(filename, buffer, sizeof (pstatus_t));
@@ -578,15 +575,13 @@ static int psrp(int pid, procstat_t *ps, char *state) {
     read_file_contents(f_usage, buffer, sizeof (prusage_t));
     myUsage = (prusage_t *) buffer;
 
-    printf("myInfo->pr_fname=%s\n", myInfo->pr_fname);
-    sstrncpy(ps->name, myInfo->pr_fname, sizeof (myInfo->pr_fname));    
-    printf("Mark 2\n");
+    sstrncpy(ps->name, myInfo->pr_fname, sizeof (myInfo->pr_fname));
     ps->num_lwp = myStatus->pr_nlwp;
     if (myInfo->pr_wstat != 0) {
         ps->num_proc = 0;
         ps->num_lwp = 0;
-        *state = (char) 'Z';        
-        return(0);
+        *state = (char) 'Z';
+        return (0);
     } else {
         ps->num_proc = 1;
         ps->num_lwp = myInfo->pr_nlwp;
@@ -598,7 +593,7 @@ static int psrp(int pid, procstat_t *ps, char *state) {
      */
     ps->cpu_system_counter = myStatus -> pr_stime.tv_nsec / 1000;
     ps->cpu_user_counter = myStatus -> pr_utime.tv_nsec / 1000;
-     
+
     /*
      * Convert rssize from KB to bytes to be consistent w/ the linux module
      */
@@ -642,118 +637,182 @@ static int psrp(int pid, procstat_t *ps, char *state) {
         *state = (char) 'S';
     else if (myStatus->pr_flags & PR_STOPPED)
         *state = (char) 'T';
+    else if (myStatus->pr_flags & PR_DETACH)
+        *state = (char) 'E';
+    else if (myStatus->pr_flags & PR_DAEMON)
+        *state = (char) 'A';
+    else if (myStatus->pr_flags & PR_ISSYS)
+        *state = (char) 'Y';
+    else if (myStatus->pr_flags & PR_ORPHAN)
+        *state = (char) 'O';
 
     free(myStatus);
     free(myInfo);
     free(myUsage);
-    printf("Mark 100\n");
 
-    return(0);
+    return (0);
 }
 
+static unsigned long read_fork_rate() {
+    extern kstat_ctl_t *kc;
+    kstat_t *ksp_chain = NULL;
+    unsigned long result = 0;
+
+    if (kc == NULL)
+        return ULONG_MAX;
+
+    for (ksp_chain = kc->kc_chain; ksp_chain != NULL;
+            ksp_chain = ksp_chain->ks_next) {
+        if ((strncmp(ksp_chain->ks_module, "cpu", 3) == 0) &&
+                (strncmp(ksp_chain->ks_name, "sys", 3) == 0) &&
+                (strncmp(ksp_chain->ks_class, "misc", 4) == 0)) {
+            kstat_read(kc, ksp_chain, NULL);
+            result += get_kstat_value(ksp_chain, "nthreads");
+        }
+    }
+    return result;
+}
+
+static void ps_submit_fork_rate(unsigned long value) {
+    value_t values[1];
+    value_list_t vl = VALUE_LIST_INIT;
+
+    values[0].derive = (derive_t) value;
+
+    vl.values = values;
+    vl.values_len = 1;
+    sstrncpy(vl.host, hostname_g, sizeof (vl.host));
+    sstrncpy(vl.plugin, "processes", sizeof (vl.plugin));
+    sstrncpy(vl.plugin_instance, "", sizeof (vl.plugin_instance));
+    sstrncpy(vl.type, "fork_rate", sizeof (vl.type));
+    sstrncpy(vl.type_instance, "", sizeof (vl.type_instance));
+
+    plugin_dispatch_values(&vl);
+}
 
 /* do actual readings from kernel */
 
-static int ps_read(void) {    
+static int ps_read(void) {
     int running = 0;
     int sleeping = 0;
     int zombies = 0;
     int stopped = 0;
     int paging = 0;
-    int blocked = 0;
+    int detached = 0;
+    int daemon = 0;
+    int system = 0;
+    int orphan = 0;
+    unsigned long fork_rate;
     struct dirent *ent;
     DIR *proc;
     int pid;
-/*
-    char cmdline[ARG_MAX];
-*/
+    /*
+        char cmdline[ARG_MAX];
+     */
 
     int status;
     struct procstat ps;
-    procstat_entry_t pse; 
-    char state;
-/*
-    unsigned long fork_rate;
-*/
-
-    printf("Mark ps_ptr\n");
-/*
+    procstat_entry_t pse;
     procstat_t *ps_ptr;
-*/
-    
-    printf("Reset list 0\n");
-    ps_list_reset();    
-    printf("Reset list\n");
+    char state;
+    /*
+        unsigned long fork_rate;
+     */
+
+    ps_list_reset();
 
 
     proc = opendir("/proc");
-    if (proc == NULL) {        
+    if (proc == NULL) {
         return (-1);
     }
 
     while ((ent = readdir(proc)) != NULL) {
-            if (!isdigit(ent->d_name[0]))
-                continue;
+        if (!isdigit(ent->d_name[0]))
+            continue;
 
-            if ((pid = atoi(ent->d_name)) < 1)                
-                continue;       
-            
-            status = psrp(pid, &ps, &state);
-            if (status != 0) {
-                DEBUG("ps_read_process failed: %i", status);                
-                continue;
-            }
-            pse.id = pid;
-            pse.age = 0;
+        if ((pid = atoi(ent->d_name)) < 1)
+            continue;
 
-            pse.num_proc = ps.num_proc;
-            pse.num_lwp = ps.num_lwp;
-            pse.vmem_size = ps.vmem_size;
-            pse.vmem_rss = ps.vmem_rss;
-            pse.vmem_data = ps.vmem_data;
-            pse.vmem_code = ps.vmem_code;
-            pse.stack_size = ps.stack_size;
+        status = psrp(pid, &ps, &state);
+        if (status != 0) {
+            DEBUG("ps_read_process failed: %i", status);
+            continue;
+        }
+        pse.id = pid;
+        pse.age = 0;
 
-            pse.vmem_minflt = 0;
-            pse.vmem_minflt_counter = ps.vmem_minflt_counter;
-            pse.vmem_majflt = 0;
-            pse.vmem_majflt_counter = ps.vmem_majflt_counter;
+        pse.num_proc = ps.num_proc;
+        pse.num_lwp = ps.num_lwp;
+        pse.vmem_size = ps.vmem_size;
+        pse.vmem_rss = ps.vmem_rss;
+        pse.vmem_data = ps.vmem_data;
+        pse.vmem_code = ps.vmem_code;
+        pse.stack_size = ps.stack_size;
 
-            pse.cpu_user = 0;
-            pse.cpu_user_counter = ps.cpu_user_counter;
-            pse.cpu_system = 0;
-            pse.cpu_system_counter = ps.cpu_system_counter;
+        pse.vmem_minflt = 0;
+        pse.vmem_minflt_counter = ps.vmem_minflt_counter;
+        pse.vmem_majflt = 0;
+        pse.vmem_majflt_counter = ps.vmem_majflt_counter;
 
-            pse.io_rchar = ps.io_rchar;
-            pse.io_wchar = ps.io_wchar;
-            pse.io_syscr = ps.io_syscr;
-            pse.io_syscw = ps.io_syscw;
-            
-            switch (state) {
-                case 'R': running++;
-                    break;
-                case 'S': sleeping++;
-                    break;
-                case 'D': blocked++;
-                    break;
-                case 'Z': zombies++;
-                    break;
-                case 'T': stopped++;
-                    break;
-                case 'W': paging++;
-                    break;
-            }
-            
-            ps_list_add(ps.name, "", &pse);
-            
+        pse.cpu_user = 0;
+        pse.cpu_user_counter = ps.cpu_user_counter;
+        pse.cpu_system = 0;
+        pse.cpu_system_counter = ps.cpu_system_counter;
+
+        pse.io_rchar = ps.io_rchar;
+        pse.io_wchar = ps.io_wchar;
+        pse.io_syscr = ps.io_syscr;
+        pse.io_syscw = ps.io_syscw;
+
+        switch (state) {
+            case 'R': running++;
+                break;
+            case 'S': sleeping++;
+                break;
+            case 'E': detached++;
+                break;
+            case 'Z': zombies++;
+                break;
+            case 'T': stopped++;
+                break;
+            case 'A': daemon++;
+                break;
+            case 'Y': system++;
+                break;
+            case 'O': orphan++;
+                break;
+        }
+
+        ps_list_add(ps.name, ps_get_cmdline(pid), &pse);
+
     } // while()
     closedir(proc);
-    
-    return(0);
+
+    ps_submit_state("running", running);
+    ps_submit_state("sleeping", sleeping);
+    ps_submit_state("zombies", zombies);
+    ps_submit_state("stopped", stopped);
+    ps_submit_state("paging", paging);
+    ps_submit_state("detached", detached);
+    ps_submit_state("daemon", daemon);
+    ps_submit_state("system", system);
+    ps_submit_state("orphan", orphan);
+
+    for (ps_ptr = list_head_g; ps_ptr != NULL; ps_ptr = ps_ptr->next)
+        ps_submit_proc_list(ps_ptr);
+
+
+    fork_rate = read_fork_rate();
+    if (fork_rate != ULONG_MAX) {
+        ps_submit_fork_rate(fork_rate);
+    }
+
+    return (0);
 } /* int ps_read */
 
 void module_register(void) {
     plugin_register_complex_config("processes", ps_config);
-    plugin_register_init("processes", ps_init);    
-    plugin_register_read("processes", ps_read);        
+    plugin_register_init("processes", ps_init);
+    plugin_register_read("processes", ps_read);
 } /* void module_register */
