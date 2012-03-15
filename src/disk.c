@@ -25,6 +25,7 @@
 #include "common.h"
 #include "plugin.h"
 #include "utils_ignorelist.h"
+#include "dev_hash.h"
 
 #if HAVE_MACH_MACH_TYPES_H
 #  include <mach/mach_types.h>
@@ -105,7 +106,9 @@ typedef struct diskstats
 static diskstats_t *disklist;
 /* #endif KERNEL_LINUX */
 
+
 #elif HAVE_LIBKSTAT
+
 #define MAX_NUMDISK 256
 extern kstat_ctl_t *kc;
 static kstat_t *ksp[MAX_NUMDISK];
@@ -649,11 +652,13 @@ static int disk_read (void)
 #  error "kstat_io_t does not have the required members"
 # endif
 	static kstat_io_t kio;
-	int i;
+	int i;        
 
 	if (kc == NULL)
 		return (-1);
-
+        
+        init_devs (); /* Create hash table for device name -> disk name */
+        
 	for (i = 0; i < numdisk; i++)
 	{
 		if (kstat_read (kc, ksp[i], &kio) == -1)
@@ -661,22 +666,24 @@ static int disk_read (void)
 
 		if (strncmp (ksp[i]->ks_class, "disk", 4) == 0)
 		{
-			disk_submit (ksp[i]->ks_name, "disk_octets",
+                    printf("Disk = %s\n", find_dev(ksp[i]->ks_name)->pretty_name);
+			disk_submit (find_dev(ksp[i]->ks_name)->pretty_name, "disk_octets",
 					kio.KIO_ROCTETS, kio.KIO_WOCTETS);
-			disk_submit (ksp[i]->ks_name, "disk_ops",
+			disk_submit (find_dev(ksp[i]->ks_name)->pretty_name, "disk_ops",
 					kio.KIO_ROPS, kio.KIO_WOPS);
 			/* FIXME: Convert this to microseconds if necessary */
-			disk_submit (ksp[i]->ks_name, "disk_time",
+			disk_submit (find_dev(ksp[i]->ks_name)->pretty_name, "disk_time",
 					kio.KIO_RTIME, kio.KIO_WTIME);
 		}
 		else if (strncmp (ksp[i]->ks_class, "partition", 9) == 0)
 		{
-			disk_submit (ksp[i]->ks_name, "disk_octets",
+			disk_submit (find_dev(ksp[i]->ks_name)->pretty_name, "disk_octets",
 					kio.KIO_ROCTETS, kio.KIO_WOCTETS);
-			disk_submit (ksp[i]->ks_name, "disk_ops",
+			disk_submit (find_dev(ksp[i]->ks_name)->pretty_name, "disk_ops",
 					kio.KIO_ROPS, kio.KIO_WOPS);
 		}
 	}
+        free_devs (); /* free hash table */
 /* #endif defined(HAVE_LIBKSTAT) */
 
 #elif defined(HAVE_LIBSTATGRAB)
@@ -751,8 +758,10 @@ static int disk_read (void)
 	return (0);
 } /* int disk_read */
 
+
 void module_register (void)
 {
+  printf("Starting module\n");
   plugin_register_config ("disk", disk_config,
       config_keys, config_keys_num);
   plugin_register_init ("disk", disk_init);
