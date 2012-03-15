@@ -76,6 +76,22 @@ case $host_os in
 esac
 AC_MSG_RESULT([$ac_system])
 
+if test "x$ac_system" = "xSolaris"
+then    
+        AC_MSG_CHECKING([for Solaris platform type ($host_cpu)])
+        case $host_cpu in
+            *sparc*)
+            AC_DEFINE([PLATFORM_SPARC], 1, [True if SPARC platform])
+            ac_platform="sparc"
+            ;;
+            *86*)
+            AC_DEFINE([PLATFORM_X86], 1, [True if x86 platform])
+            ac_platform="x86"
+            ;;
+        esac
+        AC_MSG_RESULT([$ac_platform])
+fi
+
 if test "x$ac_system" = "xLinux"
 then
 	AC_ARG_VAR([KERNEL_DIR], [path to Linux kernel sources])
