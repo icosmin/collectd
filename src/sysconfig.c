@@ -1,8 +1,33 @@
+/**
+ * collectd - src/sysconfig.c
+ * Copyright (C) 2012  Cyril Feraudet
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; either version 2 of the License, or (at your
+ * option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
+ *
+ * Authors:
+ *   Cyril Feraudet <cyril at feraudet.com>
+ *   Cosmin Ioiart <cioiart at gmail.com>
+ **/
 #include "collectd.h"
 #include "plugin.h"
 #include "common.h"
+#if !KERNEL_LINUX && !KERNEL_SOLARIS
+#error "Platform not supported"
+#endif
 
-
+#if KERNEL_LINUX
 static void get_dmidecode (char *message) {
     char buf[80]; 
     int status;
@@ -17,7 +42,52 @@ static void get_dmidecode (char *message) {
         fclose(fp);
     }
 }
+#elif KERNEL_SOLARIS
+/*
+ * Under solaris, we retrieve the information differently depending on the
+ * architecture type. Under sparc, we use prtdiag to retrieve the info, while 
+ * under x86, we use smbios
+ */
+#if PLATFORM_SPARC
 
+static void get_prtdiag (char *message)
+{
+  char buf[80];
+  int status;
+  char *fstatus;
+  FILE *fp;
+
+  status = system ("/usr/sbin/prtdiag -v|base64 > /tmp/prtdiag.b64");
+  if ((fp = fopen ("/tmp/prtdiag.b64", "r")))
+    {
+      while ((fstatus = fgets (buf, 80, fp)))
+        {
+          strncat (message, buf, sizeof (buf));
+        }
+      fclose (fp);
+    }
+}
+#elif PLATFORM_X86
+static void get_smbios (char *message)
+{
+  char buf[80];
+  int status;
+  char *fstatus;
+  FILE *fp;
+
+  status = system ("/usr/sbin/smbios -w /tmp/smbios.raw > /dev/null; 
+          base64 /tmp/smbios.raw > /tmp/smbios.b64; rm /tmp/smbios.raw");
+  if ((fp = fopen ("/tmp/smbios.b64", "r")))
+    {
+      while ((fstatus = fgets (buf, 80, fp)))
+        {
+          strncat (message, buf, sizeof (buf));
+        }
+      fclose (fp);
+    }
+}
+#endif /* platform */
+#endif /* kernel */
 static void get_collectd_package_version (char *message) {
     char buf[80]; 
     char *fstatus;
@@ -61,7 +131,15 @@ static int sysconfig_read (void) {
     notification_t notif;
 
     message[0] = '\0';
+#if KERNEL_LINUX
     get_dmidecode (message);
+#elif KERNEL_SOLARIS
+#if PLATFORM_SPARC
+    get_prtdiag (message);
+#elif PLATFORM_X86
+    get_smbios (message);
+#endif /* platform */
+#endif /* kernel */
     if (strlen(message) > 0) {
         memset (&notif, '\0', sizeof (notif));
         notif.severity = NOTIF_OKAY;
