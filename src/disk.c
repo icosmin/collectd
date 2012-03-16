@@ -652,7 +652,8 @@ static int disk_read (void)
 #  error "kstat_io_t does not have the required members"
 # endif
 	static kstat_io_t kio;
-	int i;        
+	int i; 
+        char dsk_name[80];
 
 	if (kc == NULL)
 		return (-1);
@@ -661,29 +662,42 @@ static int disk_read (void)
         
 	for (i = 0; i < numdisk; i++)
 	{
+                
 		if (kstat_read (kc, ksp[i], &kio) == -1)
 			continue;
-
+                
+                io_device_t *tmp_dev = find_dev(ksp[i]->ks_name);                
+                if (tmp_dev == NULL)                                
+                        sstrncpy (dsk_name, ksp[i]->ks_name, sizeof(ksp[i]->ks_name));
+                else
+                  {                        
+                        printf("tmp_dev->pretty_name = %s\n", tmp_dev->pretty_name);
+                        sstrncpy (dsk_name, tmp_dev->pretty_name, sizeof(dsk_name));
+                        printf("DEBUG: Got disk name = %s\n", dsk_name);                        
+                  }
+                
 		if (strncmp (ksp[i]->ks_class, "disk", 4) == 0)
-		{
-                    printf("Disk = %s\n", find_dev(ksp[i]->ks_name)->pretty_name);
-			disk_submit (find_dev(ksp[i]->ks_name)->pretty_name, "disk_octets",
+		{       
+			disk_submit (dsk_name, "disk_octets",
 					kio.KIO_ROCTETS, kio.KIO_WOCTETS);
-			disk_submit (find_dev(ksp[i]->ks_name)->pretty_name, "disk_ops",
+                 
+			disk_submit (dsk_name, "disk_ops",
 					kio.KIO_ROPS, kio.KIO_WOPS);
 			/* FIXME: Convert this to microseconds if necessary */
-			disk_submit (find_dev(ksp[i]->ks_name)->pretty_name, "disk_time",
+                 
+			disk_submit (dsk_name, "disk_time",
 					kio.KIO_RTIME, kio.KIO_WTIME);
 		}
 		else if (strncmp (ksp[i]->ks_class, "partition", 9) == 0)
 		{
-			disk_submit (find_dev(ksp[i]->ks_name)->pretty_name, "disk_octets",
+                 
+			disk_submit (dsk_name, "disk_octets",
 					kio.KIO_ROCTETS, kio.KIO_WOCTETS);
-			disk_submit (find_dev(ksp[i]->ks_name)->pretty_name, "disk_ops",
+			disk_submit (dsk_name, "disk_ops",
 					kio.KIO_ROPS, kio.KIO_WOPS);
 		}
-	}
-        free_devs (); /* free hash table */
+	}        
+        free_devs (); /* free hash table */        
 /* #endif defined(HAVE_LIBKSTAT) */
 
 #elif defined(HAVE_LIBSTATGRAB)
@@ -757,6 +771,7 @@ static int disk_read (void)
 
 	return (0);
 } /* int disk_read */
+
 
 
 void module_register (void)

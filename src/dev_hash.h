@@ -14,7 +14,7 @@
 //#include "walkers.c"
 #include "acquire_iodevs.c"
 #include "dsr.c"
-
+#include "mnt.c"
 
 
 /*
@@ -60,7 +60,7 @@ void add_dev(char *ssd, char *devname) {
 
 io_device_t *find_dev(char *ssd) {
     io_device_t *d = NULL;
-    HASH_FIND_STR(hash_iodevs, ssd, d);
+    HASH_FIND_STR(hash_iodevs, ssd, d);    
     return d;
 }
 
@@ -104,7 +104,7 @@ static void build_hash(void *v1) {
         return;
     
     
-    disk_name = new->is_pretty ? new->is_pretty: new->is_name;
+    disk_name = new->is_pretty ? new->is_pretty: new->is_name;   
     ssd_name = new->is_name;    
     add_dev(ssd_name, disk_name);
 }
