@@ -234,7 +234,6 @@ static void disk_submit (const char *plugin_instance,
 	sstrncpy (vl.plugin_instance, plugin_instance,
 			sizeof (vl.plugin_instance));
 	sstrncpy (vl.type, type, sizeof (vl.type));
-
 	plugin_dispatch_values (&vl);
 } /* void disk_submit */
 
@@ -670,10 +669,8 @@ static int disk_read (void)
                 if (tmp_dev == NULL)                                
                         sstrncpy (dsk_name, ksp[i]->ks_name, sizeof(ksp[i]->ks_name));
                 else
-                  {                        
-                        printf("tmp_dev->pretty_name = %s\n", tmp_dev->pretty_name);
+                  {     
                         sstrncpy (dsk_name, tmp_dev->pretty_name, sizeof(dsk_name));
-                        printf("DEBUG: Got disk name = %s\n", dsk_name);                        
                   }
                 
 		if (strncmp (ksp[i]->ks_class, "disk", 4) == 0)
@@ -775,8 +772,7 @@ static int disk_read (void)
 
 
 void module_register (void)
-{
-  printf("Starting module\n");
+{  
   plugin_register_config ("disk", disk_config,
       config_keys, config_keys_num);
   plugin_register_init ("disk", disk_init);
