@@ -3,6 +3,17 @@
  * Author: Cosmin Ioiart <cioiart at gmail.com>
  *
  * Created on February 2, 2012, 9:52 AM
+ * 
+ * The following files need to be downloaded from src.opensolaris.org in order
+ * to compile this module:
+ * #       acquire.c
+ * #       acquire_iodevs.c
+ *#       dsr.c
+ *#       dsr.h
+ *#       mnt.c
+ *#       pax_global_header
+ *#       statcommon.h
+ *#       walkers.c
  */
 
 #ifndef _DEV_HASH_H
@@ -11,7 +22,6 @@
 #include "uthash.h"
 #include "statcommon.h"
 #include "acquire.c"
-//#include "walkers.c"
 #include "acquire_iodevs.c"
 #include "dsr.c"
 #include "mnt.c"
