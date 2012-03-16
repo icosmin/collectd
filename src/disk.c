@@ -25,7 +25,9 @@
 #include "common.h"
 #include "plugin.h"
 #include "utils_ignorelist.h"
-#include "dev_hash.h"
+#if KERNEL_SOLARIS
+#  include "dev_hash.h"
+#endif
 
 #if HAVE_MACH_MACH_TYPES_H
 #  include <mach/mach_types.h>
