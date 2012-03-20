@@ -4840,12 +4840,19 @@ in C<contrib/write_mysql.sql> .
 Synopsis of the configuration is:
 
  <Plugin write_mysql>
-     Host "localhost"
-     User "root"
-     Passwd ""
-     Database "collectd"
-     Port "3306"
+     <Database master4example>
+     	Host "localhost"
+     	User "root"
+     	Passwd ""
+     	Database "collectd"
+     	Port "3306"
+		Replace true
+	</Database>
  </Plugin>
+
+A B<Database> block defines one connection to a MySQL database. It accepts a
+single argument which specifies the name of the database. Repeat this option 
+to specify multiple database.
 
 =over 4
 
