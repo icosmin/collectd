@@ -288,23 +288,23 @@ static int top_read(void)
             if (atoi (namelist[n]->d_name)) {
                 stat_t *stat;
                 stat = malloc(sizeof(stat_t));
-                //if (getStat (atoi (namelist[n]->d_name), stat) == 0 || stat->ppid == 2 || stat->ppid == 0) {
+                //if (getStat (atoi (namelist[n]->d_name), stat) == 0 || stat->ppid == 2 || stat->ppid == 0) {                
                 if (getStat (atoi (namelist[n]->d_name), stat) == 0) {
                     free(namelist[n]);
                     free(stat);
                     continue;
                 }
                 status_t *status;
-                status = malloc(sizeof(status_t));
+                status = malloc(sizeof(status_t));                
                 if (getStatus (atoi (namelist[n]->d_name), status) == 0) {
                     free(namelist[n]);
                     free(stat);
                     free(status);
-                }
+                }                
                 char buf[256];
-                struct passwd *pwd;
+                struct passwd *pwd;                
                 pwd = getpwuid(status->Uid[1]);
-                struct group *grp;
+                struct group *grp;                
                 grp = getgrgid(status->Gid[1]);
 #if KERNEL_LINUX              
                 snprintf(buf, sizeof(buf), "%d %d %lu %s %lu %s %ld %ld %ld %s\n", 
@@ -312,17 +312,26 @@ static int top_read(void)
                     grp->gr_name, stat->rss, stat->stime * 100 / hz,
                     stat->utime * 100 / hz, status->Name);
 #elif KERNEL_SOLARIS
-               snprintf (buf, sizeof (buf), "%d %d %lu %s %lu %s %ld %ld %ld %s\n",
-                        stat->pid, stat->ppid, status->Uid[1], pwd->pw_name, status->Gid[1],
-                        grp->gr_name, stat->rss, stat->stime,
-                        stat->utime, status->Name);   
-#endif 
+              if ((pwd != NULL) && (grp != NULL))
+                {
+                  snprintf (buf, sizeof (buf), "%d %d %lu %s %lu %s %ld %ld %ld %s\n",
+                            stat->pid, stat->ppid, status->Uid[1], pwd->pw_name, status->Gid[1],
+                            grp->gr_name, stat->rss, stat->stime,
+                            stat->utime, status->Name);
+                } else
+                {
+                  snprintf (buf, sizeof (buf), "%d %d %lu %s %lu %s %ld %ld %ld %s\n",
+                            stat->pid, stat->ppid, status->Uid[1], "NA", status->Gid[1],
+                            "NA", stat->rss, stat->stime,
+                            stat->utime, status->Name);
+                }
+#endif                
                 free(namelist[n]);
                 free(stat);
                 free(status);
                 strncat(bufferout, buf, sizeof(buf));
             }
-        }
+        }        
         //ERROR("%s", bufferout);
         notif.severity = NOTIF_OKAY;
         notif.time = cdtime ();
@@ -332,7 +341,7 @@ static int top_read(void)
         sstrncpy(notif.message, bufferout, sizeof(notif.message));
         plugin_dispatch_notification(&notif);
         free(bufferout);
-    }
+    }    
     free(namelist);
     return 0;
 }
