@@ -17,19 +17,26 @@
  *
  * Authors:
  *   Cyril Feraudet <cyril at feraudet.com>
+ *   Cosmin Ioiart <cioiart at gmail.com>
  **/
 
 #include "collectd.h"
 #include "plugin.h"
 #include "common.h"
 #include <dirent.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
+#if KERNEL_LINUX
 #include <pwd.h>
-#include <grp.h>
 #include <unistd.h>
+#endif
+#if KERNEL_LINUX || KERNEL_SOLARIS
+#include <grp.h>
+#else
+
+#endif
+#if KERNEL_SOLARIS
+#include <procfs.h>
+#endif
 
 typedef struct stat_s { 
     int pid;            // %d 
@@ -116,6 +123,7 @@ const char *statformat = "%d %s %c %d %d %d %d %d %lu %lu %lu %lu %lu %lu"
     " %lu %ld %ld %ld %ld %ld %ld %lu %lu %ld %lu %lu %lu %lu %lu %lu %lu"
     " %lu %lu %lu %lu %lu %lu %d %d"; 
 
+#if KERNEL_LINUX
 static int getStat(int pid, stat_t *s) { 
     
     char buf[256]; 
@@ -200,6 +208,65 @@ static int getStatus(int pid, status_t *s) {
         return 1; 
     } else { return 0; } 
 } 
+#elif KERNEL_SOLARIS
+static int getStat (int pid, stat_t *s)
+{
+  char f_status[64];
+  char f_psinfo[64];
+  char *buffer;
+
+  pstatus_t *myStatus;
+  psinfo_t *myInfo;
+
+  sprintf (f_status, "/proc/%d/status", pid);
+  sprintf (f_psinfo, "/proc/%d/psinfo", pid);
+
+  buffer = malloc (sizeof (pstatus_t));
+  memset (buffer, 0, sizeof (pstatus_t));
+  read_file_contents (f_status, buffer, sizeof (pstatus_t));
+  myStatus = (pstatus_t *) buffer;
+
+  buffer = malloc (sizeof (psinfo_t));
+  memset (buffer, 0, sizeof (psinfo_t));
+  read_file_contents (f_psinfo, buffer, sizeof (psinfo_t));
+  myInfo = (psinfo_t *) buffer;
+
+  s->pid = myInfo->pr_pid;
+  s->ppid = myInfo->pr_ppid;
+  s->rss = myInfo->pr_rssize * 1024;
+  s->stime = myStatus -> pr_stime.tv_sec;
+  s->utime = myStatus -> pr_utime.tv_sec;
+
+  sfree (myStatus);
+  sfree (myInfo);
+
+  return (1);
+}
+
+static int getStatus (int pid, status_t *s)
+{
+
+  char f_psinfo[64];
+  char *buffer; 
+
+
+  psinfo_t *myInfo;
+
+  sprintf (f_psinfo, "/proc/%d/psinfo", pid);
+
+  buffer = malloc (sizeof (psinfo_t));
+  memset (buffer, 0, sizeof (psinfo_t));
+  read_file_contents (f_psinfo, buffer, sizeof (psinfo_t));
+  myInfo = (psinfo_t *) buffer;
+
+  sstrncpy (s->Name, myInfo->pr_fname, sizeof (myInfo->pr_fname));  
+  s->Uid[1] = myInfo->pr_euid;
+  s->Gid[1] = myInfo->pr_egid;
+  
+  sfree (myInfo);
+  return (1);
+}
+#endif
 
 static int top_read(void)
 {
@@ -221,34 +288,50 @@ static int top_read(void)
             if (atoi (namelist[n]->d_name)) {
                 stat_t *stat;
                 stat = malloc(sizeof(stat_t));
-                //if (getStat (atoi (namelist[n]->d_name), stat) == 0 || stat->ppid == 2 || stat->ppid == 0) {
+                //if (getStat (atoi (namelist[n]->d_name), stat) == 0 || stat->ppid == 2 || stat->ppid == 0) {                
                 if (getStat (atoi (namelist[n]->d_name), stat) == 0) {
                     free(namelist[n]);
                     free(stat);
                     continue;
                 }
                 status_t *status;
-                status = malloc(sizeof(status_t));
+                status = malloc(sizeof(status_t));                
                 if (getStatus (atoi (namelist[n]->d_name), status) == 0) {
                     free(namelist[n]);
                     free(stat);
                     free(status);
-                }
+                }                
                 char buf[256];
-                struct passwd *pwd;
+                struct passwd *pwd;                
                 pwd = getpwuid(status->Uid[1]);
-                struct group *grp;
+                struct group *grp;                
                 grp = getgrgid(status->Gid[1]);
+#if KERNEL_LINUX              
                 snprintf(buf, sizeof(buf), "%d %d %lu %s %lu %s %ld %ld %ld %s\n", 
                     stat->pid, stat->ppid, status->Uid[1], pwd->pw_name, status->Gid[1], 
                     grp->gr_name, stat->rss, stat->stime * 100 / hz,
                     stat->utime * 100 / hz, status->Name);
+#elif KERNEL_SOLARIS
+              if ((pwd != NULL) && (grp != NULL))
+                {
+                  snprintf (buf, sizeof (buf), "%d %d %lu %s %lu %s %ld %ld %ld %s\n",
+                            stat->pid, stat->ppid, status->Uid[1], pwd->pw_name, status->Gid[1],
+                            grp->gr_name, stat->rss, stat->stime,
+                            stat->utime, status->Name);
+                } else
+                {
+                  snprintf (buf, sizeof (buf), "%d %d %lu %s %lu %s %ld %ld %ld %s\n",
+                            stat->pid, stat->ppid, status->Uid[1], "NA", status->Gid[1],
+                            "NA", stat->rss, stat->stime,
+                            stat->utime, status->Name);
+                }
+#endif                
                 free(namelist[n]);
                 free(stat);
                 free(status);
                 strncat(bufferout, buf, sizeof(buf));
             }
-        }
+        }        
         //ERROR("%s", bufferout);
         notif.severity = NOTIF_OKAY;
         notif.time = cdtime ();
@@ -258,7 +341,7 @@ static int top_read(void)
         sstrncpy(notif.message, bufferout, sizeof(notif.message));
         plugin_dispatch_notification(&notif);
         free(bufferout);
-    }
+    }    
     free(namelist);
     return 0;
 }
