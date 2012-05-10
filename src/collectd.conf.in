@@ -988,12 +988,16 @@
 #</Plugin>
 
 #<Plugin write_mysql>
-#	Host "localhost"
-#	User "root"
-#	Passwd ""
-#	Database "collectd"
-#	Port "3306"
+#	<Database master4example>
+#		Host "localhost"
+#		User "root"
+#		Passwd ""
+#		Database "collectd"
+#		Port "3306"
+#		Replace true
+#	</Database>
 #</Plugin>
+
 
 #<Plugin write_redis>
 #	<Node "example">

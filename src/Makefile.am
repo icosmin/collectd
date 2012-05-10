@@ -82,7 +82,7 @@ endif
 
 if BUILD_WITH_OWN_LIBOCONFIG
 collectd_LDADD += $(LIBLTDL) liboconfig/liboconfig.la
-collectd_DEPENDENCIES += $(LIBLTDL) liboconfig/liboconfig.la
+collectd_DEPENDENCIES += liboconfig/liboconfig.la
 else
 collectd_LDADD += -loconfig
 endif
@@ -299,6 +299,15 @@ curl_la_CFLAGS += $(BUILD_WITH_LIBCURL_CFLAGS)
 curl_la_LIBADD += $(BUILD_WITH_LIBCURL_LIBS)
 endif
 collectd_DEPENDENCIES += curl.la
+endif
+
+if BUILD_PLUGIN_NOTIFY_FILE
+pkglib_LTLIBRARIES += notify_file.la
+notify_file_la_SOURCES = notify_file.c
+notify_file_la_LDFLAGS = -module -avoid-version
+collectd_LDADD += "-dlopen" notify_file.la
+collectd_DEPENDENCIES += notify_file.la
+notify_file_la_LIBADD = -lz
 endif
 
 if BUILD_PLUGIN_CURL_JSON
@@ -1366,7 +1375,7 @@ dist_man_MANS = collectd.1 \
 
 #collectd_1_SOURCES = collectd.pod
 
-EXTRA_DIST = types.db pinba.proto
+EXTRA_DIST = types.db pinba.proto types-perfwatcher.db
 
 EXTRA_DIST +=   collectd.conf.pod \
 		collectd-email.pod \
@@ -1413,5 +1422,6 @@ install-exec-hook:
 	fi; \
 	$(mkinstalldirs) $(DESTDIR)$(pkgdatadir)
 	$(INSTALL) -m 0644 $(srcdir)/types.db $(DESTDIR)$(pkgdatadir)/types.db;
+	$(INSTALL) -m 0644 $(srcdir)/types-perfwatcher.db $(DESTDIR)$(sysconfdir)/types-perfwatcher.db;
 	$(INSTALL) -m 0644 $(srcdir)/postgresql_default.conf \
 		$(DESTDIR)$(pkgdatadir)/postgresql_default.conf;

@@ -280,7 +280,7 @@ static int top_read(void)
         hz = sysconf(_SC_CLK_TCK);
         char *bufferout;
         notification_t notif;
-        memset (&notif, '\0', sizeof (n));
+        memset (&notif, '\0', sizeof (notif));
         bufferout = malloc(n * sizeof(char) * 256);
         *bufferout = '\0';
         //printf("pid ppid    uid user gid group rss stime    utime  name\n");
