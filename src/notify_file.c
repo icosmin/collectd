@@ -83,7 +83,8 @@ static int value_list_to_filename (char *buffer, int buffer_len,
 
 	/* TODO: Find a way to minimize the calls to `localtime_r',
 	 * since they are pretty expensive.. */
-	now = time (NULL);
+	//now = time (NULL);
+	now = CDTIME_T_TO_TIME_T (n->time);
 	if (localtime_r (&now, &stm) == NULL)
 	{
 		ERROR ("notify_file plugin: localtime_r failed");

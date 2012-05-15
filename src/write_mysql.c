@@ -180,7 +180,7 @@ write_mysql_config_database (oconfig_item_t *ci)
 		//ud.free_func = write_mysql_database_free;
 		write_mysql_init (&ud);
 		plugin_register_write(cb_name, write_mysql_write, &ud);
-		plugin_register_notification (cb_name, notify_write_mysql, &ud);
+		//plugin_register_notification (cb_name, notify_write_mysql, &ud);
 	}
 }
 
