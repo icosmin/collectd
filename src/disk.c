@@ -111,7 +111,7 @@ static diskstats_t *disklist;
 
 #elif HAVE_LIBKSTAT
 
-#define MAX_NUMDISK 10000
+#define MAX_NUMDISK 5000
 extern kstat_ctl_t *kc;
 static kstat_t *ksp[MAX_NUMDISK];
 static int numdisk = 0;
@@ -203,15 +203,14 @@ static int disk_init (void)
 			(numdisk < MAX_NUMDISK) && (ksp_chain != NULL);
 			ksp_chain = ksp_chain->ks_next)
 	{
-		if (strncmp (ksp_chain->ks_class, "disk", 4)
-				&& strncmp (ksp_chain->ks_class, "partition", 9))
+		if (strncmp (ksp_chain->ks_class, "disk", 4))
 			continue;
 		if (ksp_chain->ks_type != KSTAT_TYPE_IO)
 			continue;
-		ksp[numdisk++] = ksp_chain;
-	}
+		ksp[numdisk++] = ksp_chain;                
+	}        
 #endif /* HAVE_LIBKSTAT */
-
+        
 	return (0);
 } /* int disk_init */
 
@@ -667,16 +666,17 @@ static int disk_read (void)
 		if (kstat_read (kc, ksp[i], &kio) == -1)
 			continue;
                 
-                io_device_t *tmp_dev = find_dev(ksp[i]->ks_name);                
-                if (tmp_dev == NULL)                                
-                        sstrncpy (dsk_name, ksp[i]->ks_name, sizeof(ksp[i]->ks_name));
-                else
-                  {     
-                        sstrncpy (dsk_name, tmp_dev->pretty_name, sizeof(dsk_name));
-                  }
                 
 		if (strncmp (ksp[i]->ks_class, "disk", 4) == 0)
-		{       
+		{
+                        io_device_t *tmp_dev = find_dev (ksp[i]->ks_name);
+                        if (tmp_dev == NULL)
+                                sstrncpy (dsk_name, ksp[i]->ks_name, sizeof (ksp[i]->ks_name));
+                        else
+                        {
+                                sstrncpy (dsk_name, tmp_dev->pretty_name, sizeof (dsk_name));
+                        }
+                
 			disk_submit (dsk_name, "disk_octets",
 					kio.KIO_ROCTETS, kio.KIO_WOCTETS);
                  
@@ -685,15 +685,7 @@ static int disk_read (void)
 			/* FIXME: Convert this to microseconds if necessary */
                  
 			disk_submit (dsk_name, "disk_time",
-					kio.KIO_RTIME, kio.KIO_WTIME);
-		}
-		else if (strncmp (ksp[i]->ks_class, "partition", 9) == 0)
-		{
-                 
-			disk_submit (dsk_name, "disk_octets",
-					kio.KIO_ROCTETS, kio.KIO_WOCTETS);
-			disk_submit (dsk_name, "disk_ops",
-					kio.KIO_ROPS, kio.KIO_WOPS);
+					kio.KIO_RTIME/10000/10000, kio.KIO_WTIME/10000/10000);                 
 		}
 	}        
         free_devs (); /* free hash table */        
