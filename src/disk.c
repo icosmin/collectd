@@ -111,7 +111,7 @@ static diskstats_t *disklist;
 
 #elif HAVE_LIBKSTAT
 
-#define MAX_NUMDISK 256
+#define MAX_NUMDISK 10000
 extern kstat_ctl_t *kc;
 static kstat_t *ksp[MAX_NUMDISK];
 static int numdisk = 0;
