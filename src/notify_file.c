@@ -131,7 +131,6 @@ static int notify_file_notify (const notification_t * n,
 {
 	char         filename[512];
 	FILE        *notify_file;
-	int          notify_file_fd;
 
 	if (value_list_to_filename (filename, sizeof (filename), n) != 0)
 		return (-1);
@@ -149,7 +148,6 @@ static int notify_file_notify (const notification_t * n,
 				sstrerror (errno, errbuf, sizeof (errbuf)));
 		return (-1);
 	}
-	notify_file_fd = fileno (notify_file);
 
 	gzwrite(notify_file, n->message, strlen(n->message));
 	//gzprintf (notify_file, "%s\n", n->message);

@@ -147,12 +147,13 @@ static int getStat(int pid, stat_t *s) {
 
 static int getStatus(int pid, status_t *s) { 
     int i; 
-    char name[256], *status; 
+    char name[256];
     char buf[256]; 
     FILE *proc; 
     sprintf(name,"/proc/%d/status",pid); 
     proc = fopen(name,"r"); 
     if (proc) { 
+    	char *status; 
         status = fgets(buf,256,proc); sscanf(buf,"Name:\t%s",s->Name); 
         status = fgets(buf,256,proc); sscanf(buf,"State:\t%c",&s->State); 
         status = fgets(buf,256,proc); if(sscanf(buf,"SleepAVG:\t%lu",&s->SleepAVG)) {
@@ -205,7 +206,7 @@ static int getStatus(int pid, status_t *s) {
         status = fgets(buf,256,proc);
         sscanf(buf,"Mems_allowed:\t%lx,%lx",&(s->Mems_allowed[0]), &(s->Mems_allowed[1])); 
         fclose(proc); 
-        return 1; 
+	if (status) { return 1;	} else { return 1; }
     } else { return 0; } 
 } 
 #elif KERNEL_SOLARIS
