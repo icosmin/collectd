@@ -10,7 +10,7 @@ static void get_dmidecode (char *message) {
     FILE *fp;
     status = system("/usr/sbin/dmidecode --dump-bin /tmp/dmidecode.bin >/dev/null "
        "; base64 /tmp/dmidecode.bin > /tmp/dmidecode.b64 ; rm /tmp/dmidecode.bin");
-    if ((fp = fopen("/tmp/dmidecode.b64","r"))) {
+    if ( status && (fp = fopen("/tmp/dmidecode.b64","r"))) {
         while((fstatus = fgets(buf, 80, fp))) {
             strncat(message, buf, sizeof(buf));
         }
