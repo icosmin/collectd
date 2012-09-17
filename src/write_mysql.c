@@ -569,7 +569,7 @@ add_dataset_id (data_source_t * ds, int type_id, user_data_t * ud)
 	}
       *id = mysql_stmt_insert_id (stmt);
       mysql_stmt_close (stmt);
-      pthread_mutex_unlock (&db->mutexdb);
+      // pthread_mutex_unlock (&db->mutexdb);
       DEBUG ("insert dataset_id in DB : %d (%s) (%d)", *id, ds->name,
 	     type_id);
     }
