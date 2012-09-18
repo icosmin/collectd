@@ -506,8 +506,7 @@ static int cpu_read (void)
                           idle = 0;
                         
                 }
-                printf("id=%d,usr=%d,sys=%d,wt=%d\n", idle, user, syst, wait);
-                
+                               
 		tidle += idle;
 		tuser += user;
 		tsyst += syst;
