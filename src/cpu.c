@@ -29,6 +29,39 @@
 #include "common.h"
 #include "plugin.h"
 
+
+/**
+ * CPU module configuration options. 
+ * Because the values received from Linux  machines are received in Jiffies 
+ * and the values received from Solaris machines are in cycles there is no good 
+ * way of aggregating the two. Therefore the configuration option SendPercent will
+ * make Solaris machines send the value as e number between 0 and 100.
+ * 
+ * SendPercent - false|true. If true then the value sent is a number between 0 and 100, 
+ *      otherwise the default system standard value is sent
+ **/
+static int sendPercent = 0;
+static const char *config_keys[] =
+{
+	"SendPercent"	
+};
+
+static int config_keys_num = STATIC_ARRAY_SIZE (config_keys);
+
+static int cpu_config (const char *key, const char *value)
+{
+    if (0 == strcasecmp (key, "SendPercent"))
+    {
+      if (IS_TRUE (value))
+        sendPercent = 1;
+      else
+        sendPercent = 0;
+    } else {
+      return -1;
+    }
+  return 0;
+} /* int cpu config (const char *, const char *) */
+
 #ifdef HAVE_MACH_KERN_RETURN_H
 # include <mach/kern_return.h>
 #endif
@@ -442,7 +475,7 @@ static int cpu_read (void)
 
 #elif defined(HAVE_LIBKSTAT)
 	int cpu;
-	derive_t user, syst, idle, wait;
+	derive_t user, syst, idle, wait, total;
 	derive_t tuser = 0, tsyst = 0, tidle = 0, twait = 0;
 	static cpu_stat_t cs;
 
@@ -458,6 +491,23 @@ static int cpu_read (void)
 		user = (derive_t) cs.cpu_sysinfo.cpu[CPU_USER];
 		syst = (derive_t) cs.cpu_sysinfo.cpu[CPU_KERNEL];
 		wait = (derive_t) cs.cpu_sysinfo.cpu[CPU_WAIT];
+                
+                
+                /* Calculating percentages to be sent as values */
+                if(sendPercent == 1) 
+                {
+                        total = idle + user + syst + wait;
+                        
+                        user = user * 100 / total;
+                        syst = syst * 100 / total;
+                        wait = wait * 100 / total;
+                        idle = 100 - (user + syst + wait);
+                        if(idle < 0)
+                          idle = 0;
+                        
+                }
+                printf("id=%d,usr=%d,sys=%d,wt=%d\n", idle, user, syst, wait);
+                
 		tidle += idle;
 		tuser += user;
 		tsyst += syst;
@@ -646,5 +696,7 @@ static int cpu_read (void)
 void module_register (void)
 {
 	plugin_register_init ("cpu", init);
+        plugin_register_config ("cpu", cpu_config,
+			config_keys, config_keys_num);
 	plugin_register_read ("cpu", cpu_read);
 } /* void module_register */
